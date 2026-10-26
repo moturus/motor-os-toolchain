@@ -17,11 +17,12 @@ The toolchain consists of:
   use, and the C/C++ cross sysroot (mlibc, libc++, libc++abi, libunwind,
   compiler-rt builtins, and the `moto-rt-cabi` shim) with its compiler
   wrappers;
-- the native Motor OS toolchain, as the image overlays `llvm`, `rustc`,
-  `rust-analyzer`, and `libc`: rustc, rustfmt, clippy-driver, rust-analyzer,
-  the LLVM multicall, headers, libraries, and mlibc's configuration.
+- the native toolchain, which runs inside Motor OS: rustc, rustfmt,
+  clippy-driver, rust-analyzer, Clang, LLD, and the LLVM tools, with their
+  launchers, headers, libraries, Rust sources, and configuration.
 
-Nothing is read from a Motor OS checkout.
+By default, nothing is read from a Motor OS checkout. Local development can
+explicitly use runtime crates from one; see "The Motor runtime crates" below.
 
 ## Building
 
@@ -69,7 +70,7 @@ motor-os-tar's `tar` writes them; GNU tar reads them too.
 | Archive | Contents | Used by |
 |---|---|---|
 | `motor-toolchain-<name>-x86_64-linux.tar.zst` | `install.sh` and `toolchain/`, the Linux-host toolchain | Linux cross builds: the Motor OS repository, programs built beside it, third parties |
-| `motor-toolchain-<name>.tar.zst` | `install.sh`, `manifest`, and `images/`, the native overlays | the Motor OS imager on Linux, and a user of a running Motor OS VM |
+| `motor-toolchain-<name>.tar.zst` | `install.sh` and `images/`, the native toolchain files | the Motor OS imager on Linux, and a user of a running Motor OS VM |
 
 The host installer requires rustup on `PATH` before it copies the toolchain.
 If rustup is not installed yet, install it without selecting a default:
@@ -80,12 +81,23 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
 . "$HOME/.cargo/env"
 ```
 
-Then install the host toolchain:
+The examples below use release `x86_64-unknown-motor-1.99.1`; substitute
+the name of the release you built throughout. On Linux, extraction with
+GNU tar requires `zstd` on `PATH`.
+
+After the build above, start in the `motor-os-toolchain` checkout and change
+to its parent directory, where the build wrote the archives. Verify and
+install the Linux-host archive there:
 
 ```sh
+cd ..
+sha256sum -c motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst.sha256
 tar -xaf motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst
 motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux/install.sh
 ```
+
+If you obtained the archives separately, start in the directory containing
+the Linux-host archive and its checksum file, and omit `cd ..`.
 
 `install.sh` copies the toolchain to
 `~/.local/share/motor/toolchains/<name>`, or the directory given with
@@ -94,20 +106,26 @@ motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux/install.sh
 deleted afterwards. A `rust-toolchain.toml` with
 `channel = "x86_64-unknown-motor-1.99.1"` then selects it.
 
-On a Motor OS VM, `install.sh` in the native archive installs the native
-toolchain into `/devtools`, which the Interactive role owns:
+The native archive is a separate file on the Linux build host; installing
+the Linux-host archive does not transfer it into a VM. First copy
+`motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst` from the build output
+directory into `/user/` in the Motor OS VM using your file-transfer setup.
+Then run the following commands inside the VM as Interactive. The native
+`install.sh` installs into `/devtools`, which that role owns:
 
 ```sh
 mkdir /user/toolchain
 cd /user/toolchain
-tar -x -f motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst
+tar -x -f /user/motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst
 motor-toolchain-x86_64-unknown-motor-1.99.1/install.sh
 ```
 
-It replaces `/devtools/llvm` and `/devtools/rust`, copies the launchers in
-`/devtools/bin`, the examples in `/devtools/src/hello-world`, and the
-manifest to `/devtools/toolchain/manifest`, and refuses to replace a
-different toolchain unless given `--replace`. The copies keep the modes the
+Use an empty extraction directory; if `/user/toolchain` already exists,
+choose another directory for the first two commands.
+
+It replaces `/devtools/llvm` and `/devtools/rust` with the requested
+toolchain and copies the launchers in `/devtools/bin` and the examples in
+`/devtools/src/hello-world`. The copies keep the modes the
 unpacking session gave the files, which no lower role may execute, so it then
 makes the programs executable by every role, and the launchers editable by
 Interactive as well, as they are on the image. mlibc's configuration stays in
@@ -120,7 +138,6 @@ lays out its own:
 
 ```text
 x86_64-unknown-motor-1.99.1/
-  manifest                                      the toolchain's name
   bin/                                          rustc, rustdoc, cargo, cargo-clippy,
                                                 clippy-driver, rustfmt, cargo-fmt,
                                                 rust-analyzer
@@ -145,8 +162,8 @@ from their own location, so the directory works wherever it is installed.
 Every path follows from the sysroot rustc reports:
 
 ```sh
-$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-motor/sysroot/bin/motor-clang
-$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar
+"$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-motor/sysroot/bin/motor-clang"
+"$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar"
 ```
 
 `motor-clang` and `motor-clang++` compile and link C and C++ for Motor OS;
@@ -156,24 +173,74 @@ that contain C or C++ point `CARGO_TARGET_X86_64_UNKNOWN_MOTOR_LINKER`,
 Motor OS build does. `motor-rust-cc` is the linker Rust bootstrap uses for
 Motor; it names the C runtime libraries itself.
 
-## The native overlays
+## The native toolchain
 
-`images/` in the native archive holds the toolchain's part of a Motor OS
-image:
+The native toolchain compiles and analyzes programs inside a Motor OS VM.
+It has five executable binaries, installed at these paths:
 
-| Overlay | Contents |
+| File | Purpose |
 |---|---|
-| `llvm` | `/devtools/llvm/bin/llvm` (Clang, LLD, and the LLVM tools in one binary), its configuration and resource headers, mlibc's and libc++'s headers, the static libraries, `crt1.o`, the `cc` and `c++` launchers, and C and C++ examples |
-| `rustc` | `/devtools/rust/bin/{rustc,rustfmt,clippy-driver}`, their launchers in `/devtools/bin`, the Motor standard library, and a Rust example |
-| `rust-analyzer` | `/devtools/rust/bin/rust-analyzer` and the `rust-src` it indexes |
-| `libc` | mlibc's runtime configuration in `/system/cfg/libc` |
+| `/devtools/llvm/bin/llvm` | Clang, LLD, and the LLVM tools in one multicall binary; the first argument selects the tool |
+| `/devtools/rust/bin/rustc` | Rust compiler |
+| `/devtools/rust/bin/rustfmt` | Rust formatter |
+| `/devtools/rust/bin/clippy-driver` | Rust compiler driver with Clippy's lints |
+| `/devtools/rust/bin/rust-analyzer` | Rust language server |
 
-Each overlay carries the toolchain's manifest as `/devtools/toolchain/manifest`.
+Five Rush launcher scripts provide the compiler commands in `/devtools/bin`:
 
-## The manifest
+| File | Command it runs |
+|---|---|
+| `/devtools/bin/cc` | `/devtools/llvm/bin/llvm clang` |
+| `/devtools/bin/c++` | `/devtools/llvm/bin/llvm clang --driver-mode=g++` |
+| `/devtools/bin/rustc` | `/devtools/rust/bin/rustc` |
+| `/devtools/bin/rustfmt` | `/devtools/rust/bin/rustfmt` |
+| `/devtools/bin/clippy-driver` | `/devtools/rust/bin/clippy-driver` |
 
-`manifest` is one line, `toolchain=<name>`, which the Motor OS build and the
-native `install.sh` read. It records nothing else.
+Each launcher forwards its arguments. Rust-analyzer is invoked directly at
+its binary path. Rustc uses `cc` as its default linker.
+
+The supporting files are installed below. Header, Rust library, and source
+trees are listed as directories because their individual filenames depend
+on the compiler version; `23` is the Clang major version in this release.
+
+```text
+/devtools/
+  llvm/
+    cfg/x86_64-unknown-motor.cfg       Clang's resource-directory setting
+    include/                         mlibc headers and moto_rt.h
+      c++/v1/                        libc++ headers
+    lib/
+      clang/23/include/              Clang's builtin and intrinsic headers
+      crt1.o                         C runtime startup
+      libc.a                         mlibc
+      libc++.a                       C++ standard library
+      libc++abi.a                    C++ ABI runtime
+      libunwind.a                    stack unwinding
+      libmoto_rt_cabi.a               Motor runtime C-ABI shim
+      libclang_rt.builtins-x86_64.a   compiler builtins
+      libdl.a
+      libm.a
+      libpthread.a
+      librt.a
+      libresolv.a
+      libutil.a
+      libssp.a
+      libssp_nonshared.a
+  rust/lib/rustlib/
+    x86_64-unknown-motor/lib/         Rust libraries (.rlib and .rmeta files,
+                                     plus self-contained linker support)
+    src/rust/library/                rust-src, used by rust-analyzer
+  src/hello-world/
+    hello.c                          C example
+    hello.cpp                        C++ example
+    hello.rs                         Rust example
+```
+
+The `libdl.a` through `libssp_nonshared.a` archives are mlibc's companion
+libraries. The native archive also supplies `/system/cfg/libc/hosts`,
+`/system/cfg/libc/services`, and `/system/cfg/libc/shells`. The VM installer
+leaves that system configuration unchanged; it is supplied when the Motor
+OS image is built.
 
 ## Changing the toolchain
 
@@ -196,17 +263,16 @@ the same way: commit it to a branch of a local checkout of the fork, point
 the repository and the branch at it, and build with `--dev`, which names the
 result `<name>-dev`. For LLVM, the Rust branch's `src/llvm-project` gitlink
 names the commit and `MOTOR_LLVM_REPOSITORY` the repository it is fetched
-from. Local builds are
-packaged like releases and can be installed and used by the Motor OS build
-the same way; they are not published.
+from. Local builds are packaged like releases and can be installed and used
+by the Motor OS build the same way; they are not published.
 
 ## The Motor runtime crates
 
 Three Motor OS crates enter the toolchain: `moto-rt` (linked by Rust std and,
 through the `ctrlc` fork, by the compiler tools built for Motor), `moto-sys`
 (used by the shim), and `moto-rt-cabi` (the shim itself). The first two come
-from crates.io and the third from the mlibc fork; no path, Git source, or
-`[patch]` points at a Motor OS checkout. Every reference:
+from crates.io and the third from the mlibc fork. In the default recipe, no
+path, Git source, or `[patch]` points at a Motor OS checkout. Every reference:
 
 | Repository | File | Reference |
 |---|---|---|
@@ -230,22 +296,24 @@ The supported way to change the runtime is to publish `moto-rt` (and
 `moto-sys` if it changed), select the new versions in the manifests above,
 refresh the lockfiles, and push the fork branches. Building against a Motor
 OS checkout's `src/sys/lib/moto-rt` and `moto-sys` before publishing is a
-local build, with `MOTOR=/absolute/path/to/motor-os`:
+local build. In the TOML examples below, replace `/absolute/path/to/motor-os`
+with the checkout's actual absolute path. Cargo does not expand shell
+variables such as `$MOTOR` in TOML paths.
 
 1. Rust fork, `library/Cargo.toml`, under `[patch.crates-io]`:
-   `moto-rt = { path = "$MOTOR/src/sys/lib/moto-rt" }`. If the local version
-   is outside `0.17.9`'s requirement, also bump the version in
+   `moto-rt = { path = "/absolute/path/to/motor-os/src/sys/lib/moto-rt" }`.
+   If the local version is outside `0.17.9`'s requirement, also bump the version in
    `library/std/Cargo.toml`, or Cargo reports the patch as unused.
 2. Rust fork, root `Cargo.toml`: the same line under its `[patch.crates-io]`,
-   for `ctrlc`'s `moto-rt` (`"0.17"`; bump the fork if the local major
-   version changed).
+   for `ctrlc`'s `moto-rt` (`"0.17"`; update that fork's requirement if the
+   local version is incompatible, including a change from `0.17` to `0.18`).
 3. Rust fork: refresh both lockfiles with `cargo update -p moto-rt
    --manifest-path library/Cargo.toml` and `cargo update -p moto-rt`, since
    the build refuses to change them, and commit.
 4. mlibc fork, `sysdeps/motor/moto-rt-cabi/Cargo.toml`: add
-   `[patch.crates-io]` with `moto-rt = { path = "$MOTOR/src/sys/lib/moto-rt" }`
-   and `moto-sys = { path = "$MOTOR/src/sys/lib/moto-sys" }` (bumping the two
-   version requirements if needed), run `cargo update -p moto-rt -p moto-sys`
+   `[patch.crates-io]` with `moto-rt = { path = "/absolute/path/to/motor-os/src/sys/lib/moto-rt" }`
+   and `moto-sys = { path = "/absolute/path/to/motor-os/src/sys/lib/moto-sys" }`
+   (bumping the two version requirements if needed), run `cargo update -p moto-rt -p moto-sys`
    in that directory, and commit. Keep `MOTO_RT_VERSION` in `moto_rt.h` equal
    to the local `moto_rt::RT_VERSION`, or the shim fails to compile.
 5. Point `MOTOR_RUST_REPOSITORY`, `MOTOR_RUST_BRANCH`,

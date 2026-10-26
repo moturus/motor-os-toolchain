@@ -56,7 +56,7 @@ TOOLCHAIN_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 . "$TOOLCHAIN_ROOT/versions.sh"
 . "$TOOLCHAIN_ROOT/patches/crates.sh"
 for helper in lib llvm bootstrap prefix host rust-analyzer patched-crates \
-	native native-rust-analyzer manifest package; do
+	native native-rust-analyzer package; do
 	. "$TOOLCHAIN_ROOT/lib/toolchain-$helper.sh"
 done
 
@@ -632,7 +632,6 @@ main() {
 	toolchain_build_native_rustc "$RUST"
 	rustc_stage_image
 	toolchain_build_native_rust_analyzer "$RUST"
-	toolchain_write_manifest
 	build_tar
 	toolchain_package "$TAR" "$out"
 	rm -rf "$WORK"

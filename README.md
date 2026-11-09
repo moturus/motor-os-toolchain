@@ -45,10 +45,10 @@ writes the two archives and a checksum file for each next to the checkout,
 and removes `build/`:
 
 ```text
-../motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst
-../motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst.sha256
-../motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst
-../motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst.sha256
+../motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst
+../motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst.sha256
+../motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst
+../motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst.sha256
 ```
 
 A build replaces earlier archives of the same name there. With this checkout
@@ -81,7 +81,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
 . "$HOME/.cargo/env"
 ```
 
-The examples below use release `x86_64-unknown-motor-1.99.1`; substitute
+The examples below use release `x86_64-unknown-motor-1.99.1-2`; substitute
 the name of the release you built throughout. On Linux, extraction with
 GNU tar requires `zstd` on `PATH`.
 
@@ -91,9 +91,9 @@ install the Linux-host archive there:
 
 ```sh
 cd ..
-sha256sum -c motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst.sha256
-tar -xaf motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux.tar.zst
-motor-toolchain-x86_64-unknown-motor-1.99.1-x86_64-linux/install.sh
+sha256sum -c motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst.sha256
+tar -xaf motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst
+motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux/install.sh
 ```
 
 If you obtained the archives separately, start in the directory containing
@@ -104,11 +104,11 @@ the Linux-host archive and its checksum file, and omit `cd ..`.
 `--prefix DIR`, replacing an earlier installation there, and runs
 `rustup toolchain link <name> <directory>`. The unpacked archive can be
 deleted afterwards. A `rust-toolchain.toml` with
-`channel = "x86_64-unknown-motor-1.99.1"` then selects it.
+`channel = "x86_64-unknown-motor-1.99.1-2"` then selects it.
 
 The native archive is a separate file on the Linux build host; installing
 the Linux-host archive does not transfer it into a VM. First copy
-`motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst` from the build output
+`motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst` from the build output
 directory into `/user/` in the Motor OS VM using your file-transfer setup.
 Then run the following commands inside the VM as Interactive. The native
 `install.sh` installs into `/devtools`, which that role owns:
@@ -116,8 +116,8 @@ Then run the following commands inside the VM as Interactive. The native
 ```sh
 mkdir /user/toolchain
 cd /user/toolchain
-tar -x -f /user/motor-toolchain-x86_64-unknown-motor-1.99.1.tar.zst
-motor-toolchain-x86_64-unknown-motor-1.99.1/install.sh
+tar -x -f /user/motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst
+motor-toolchain-x86_64-unknown-motor-1.99.1-2/install.sh
 ```
 
 Use an empty extraction directory; if `/user/toolchain` already exists,
@@ -137,7 +137,7 @@ The host toolchain is a rustup toolchain directory, laid out the way Rust
 lays out its own:
 
 ```text
-x86_64-unknown-motor-1.99.1/
+x86_64-unknown-motor-1.99.1-2/
   bin/                                          rustc, rustdoc, cargo, cargo-clippy,
                                                 clippy-driver, rustfmt, cargo-fmt,
                                                 rust-analyzer

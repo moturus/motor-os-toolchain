@@ -11,7 +11,7 @@
 # A repository may also be a local path; see "Changing the toolchain" in
 # README.md.
 
-MOTOR_TOOLCHAIN_RELEASE="1"
+MOTOR_TOOLCHAIN_RELEASE="2"
 
 # The Rust fork. Its gitlinks select LLVM, Cargo, and the other submodules.
 MOTOR_RUST_REPOSITORY="https://github.com/moturus/rust.git"

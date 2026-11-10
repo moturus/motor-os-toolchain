@@ -104,8 +104,11 @@ toolchain_package() {
 	chmod 0755 "$stage/$host/install.sh" "$stage/$native/install.sh" || return
 	rm -f "$out/$host.tar.zst" "$out/$host.tar.zst.sha256" \
 		"$out/$native.tar.zst" "$out/$native.tar.zst.sha256" || return
+	toolchain_log "writing archive $out/$host.tar.zst"
 	"$tar" -c --zstd -f "$out/$host.tar.zst" -C "$stage" "$host" || return
+	toolchain_log "writing archive $out/$native.tar.zst"
 	"$tar" -c --zstd -f "$out/$native.tar.zst" -C "$stage" "$native" || return
+	toolchain_log "computing sha256 checksums"
 	(cd "$out" && sha256sum "$host.tar.zst" > "$host.tar.zst.sha256" &&
 		sha256sum "$native.tar.zst" > "$native.tar.zst.sha256")
 }

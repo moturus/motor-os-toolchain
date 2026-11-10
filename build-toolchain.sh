@@ -106,6 +106,7 @@ PACKAGES=(git build-essential clang cmake ninja-build meson python3 \
 	zlib1g-dev libssl-dev pkg-config curl)
 
 provision_host() {
+	log "provisioning: checking required host packages and rustup"
 	if ! command -v apt-get >/dev/null 2>&1; then
 		warn "apt-get not found; install these packages yourself: ${PACKAGES[*]}"
 	else
@@ -115,9 +116,12 @@ provision_host() {
 				grep -q 'install ok installed' || missing+=("$package")
 		done
 		if [ "${#missing[@]}" -gt 0 ]; then
-			log "installing host packages: ${missing[*]}"
+			log "installing missing host packages: ${missing[*]}"
 			sudo apt-get update
-			sudo DEBIAN_FRONTEND=noninteractive apt-get -y install "${missing[@]}"
+			# sudo DEBIAN_FRONTEND=noninteractive apt-get -y install "${missing[@]}"
+			sudo apt-get -y install "${missing[@]}"
+		else
+			log "all required host packages are already installed"
 		fi
 	fi
 	[ ! -f "$HOME/.cargo/env" ] || . "$HOME/.cargo/env"
@@ -126,22 +130,26 @@ provision_host() {
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
 			sh -s -- -y --default-toolchain none
 		. "$HOME/.cargo/env"
+	else
+		log "rustup is already installed ($(command -v rustup))"
 	fi
 }
 
-# --- stage 1: the sources ------------------------------------------------------
+# --- stage 1/12: the sources ---------------------------------------------------
 # Bootstrap does not update submodules (submodules = false); these are the ones
 # it needs besides LLVM, whose repository versions.sh selects explicitly.
 RUST_SUBMODULES=(src/tools/cargo library/backtrace src/doc/book
 	src/doc/reference src/tools/rustc-perf)
 
 fetch_sources() {
-	log "stage 1: fetching the sources"
+	log "stage 1/12: fetching the sources"
 	toolchain_fetch_branch "$MOTOR_RUST_REPOSITORY" "$MOTOR_RUST_BRANCH" "$RUST"
+	log "fetching LLVM submodule ($MOTOR_LLVM_REPOSITORY) into build/rust/src/llvm-project"
 	git -C "$RUST" config submodule.src/llvm-project.url "$MOTOR_LLVM_REPOSITORY"
 	# Permit local LLVM checkouts only for this explicitly configured submodule.
-	git -C "$RUST" -c protocol.file.allow=always submodule update -q --init --depth 1 src/llvm-project
-	git -C "$RUST" submodule update -q --init --depth 1 "${RUST_SUBMODULES[@]}"
+	git -C "$RUST" -c protocol.file.allow=always submodule update --init --depth 1 src/llvm-project
+	log "fetching Rust submodules (${RUST_SUBMODULES[*]})"
+	git -C "$RUST" submodule update --init --depth 1 "${RUST_SUBMODULES[@]}"
 	toolchain_fetch_branch "$MOTOR_MLIBC_REPOSITORY" "$MOTOR_MLIBC_BRANCH" "$MLIBC"
 	toolchain_fetch_branch "$MOTOR_TAR_REPOSITORY" "$MOTOR_TAR_BRANCH" "$TAR_SOURCE"
 	RUST_VERSION="$(cat "$RUST/src/version")"
@@ -172,9 +180,9 @@ EOF
 # native LLVM/Clang, staged into the overlays.
 # ============================================================================
 
-# --- stage 2: the C-ABI shim (libmoto_rt_cabi.a) ----------------------------
+# --- stage 3/12: the C-ABI shim (libmoto_rt_cabi.a) ----------------------------
 build_shim() {
-	log "stage 2: building the moto-rt-cabi shim"
+	log "stage 3/12: building the moto-rt-cabi shim"
 	local rustlibs=("$RUSTLIB_SRC"/*.rlib) symbol
 	for symbol in motor_start memcpy memmove memset memcmp; do
 		if "$B/llvm-nm" --defined-only "${rustlibs[@]}" 2>/dev/null |
@@ -207,9 +215,9 @@ build_shim() {
 	cp "$MLIBC/sysdeps/motor/moto-rt-cabi/moto_rt.h" "$SYSROOT/$TOOLS/include/"
 }
 
-# --- stage 3: compiler-rt builtins (emutls excluded) ------------------------
+# --- stage 4/12: compiler-rt builtins (emutls excluded) ------------------------
 build_builtins() {
-	log "stage 3: building compiler-rt builtins"
+	log "stage 4/12: building compiler-rt builtins"
 	# -ffreestanding: the builtins are freestanding, and it keeps clang's
 	# resource limits.h/stdint.h from #include_next-ing into the host's glibc
 	# headers. The Motor ToolChain adds <sysroot>/devtools/llvm/include, which
@@ -269,9 +277,9 @@ build_builtins() {
 	done
 }
 
-# --- stage 4: mlibc ---------------------------------------------------------
+# --- stage 5/12: mlibc ---------------------------------------------------------
 build_mlibc() {
-	log "stage 4: building mlibc"
+	log "stage 5/12: building mlibc"
 	# Meson cross file with this machine's absolute paths (kept out of the repos).
 	# MLIBC_SYSCONFDIR repoints mlibc's runtime config lookups (resolv.conf,
 	# hosts, passwd, ...) from /etc to /system/cfg/libc.
@@ -302,6 +310,7 @@ EOF
 		}
 
 		# Headers first (validates ABI/meson wiring quickly).
+		log "installing mlibc headers into sysroot"
 		setup_mlibc_build -Dheaders_only=true "$MLIBC_HEADERS_BUILD"
 		DESTDIR="$SYSROOT" ninja -C "$MLIBC_HEADERS_BUILD" install
 
@@ -310,6 +319,7 @@ EOF
 		# (-O2 -g); the flag keeps -O2 and drops only -g. Without it libc.a is
 		# 18 MB (59% DWARF) and every mlibc-linked binary carries ~6.6 MB of
 		# debug info (see docs/libc_start_redesign.md). .text is byte-identical.
+		log "building and installing static mlibc"
 		setup_mlibc_build -Ddefault_library=static -Dbuild_tests=false -Ddebug=false \
 			"$MLIBC_BUILD"
 		ninja -C "$MLIBC_BUILD"
@@ -318,9 +328,9 @@ EOF
 	ls "$SYSROOT/$TOOLS/lib/libc.a" "$SYSROOT/$TOOLS/lib/crt1.o" >/dev/null
 }
 
-# --- stage 5: the C++ runtime stack (with exceptions) -----------------------
+# --- stage 6/12: the C++ runtime stack (with exceptions) -----------------------
 build_cxx_runtimes() {
-	log "stage 5: building libunwind + libc++abi + libc++ (exceptions on)"
+	log "stage 6/12: building libunwind + libc++abi + libc++ (exceptions on)"
 	cmake -G Ninja -S "$LLVM/runtimes" -B "$CXX_BUILD" \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_COMPILER="$B/clang" -DCMAKE_CXX_COMPILER="$B/clang++" \
@@ -368,9 +378,9 @@ build_cxx_runtimes() {
 		"$SYSROOT/$TOOLS/lib/libunwind.a" >/dev/null
 }
 
-# --- stage 6: the native LLVM toolchain (the on-image `llvm`) ----------------
+# --- stage 7/12: the native LLVM toolchain (the on-image `llvm`) ---------------
 build_native_llvm() {
-	log "stage 6: building the native (on-image) LLVM toolchain"
+	log "stage 7/12: building the native (on-image) LLVM toolchain"
 	# The STANDARD_LIBRARIES mirror the Motor ToolChain's link group (shim first
 	# so its __cxa_thread_atexit wins; -lunwind for the EH runtime). Both the C
 	# and C++ groups carry -lc++abi: mlibc is implemented in C++, so even a C link
@@ -410,9 +420,9 @@ build_native_llvm() {
 	ninja -C "$NATIVE_LLVM_BUILD" llvm-driver
 }
 
-# --- stage 7: stage the C/C++ toolchain into the image ----------------------
+# --- stage 8/12: stage the C/C++ toolchain into the image ----------------------
 llvm_stage_image() {
-	log "stage 7: staging the C/C++ toolchain and libc configuration into the overlays"
+	log "stage 8/12: staging the C/C++ toolchain and libc configuration into the overlays"
 	local img="$LLVM_IMG"
 	mkdir -p "$img/devtools/bin" "$img/devtools/src/hello-world" \
 		"$img/$TOOLS/bin" "$img/$TOOLS/lib" \
@@ -474,7 +484,7 @@ EOF
 
 	# The image driver config: only the resource dir needs pinning (the full
 	# link/include recipe lives in the Motor ToolChain now). Clang auto-loads it
-	# from /devtools/llvm/cfg (CLANG_CONFIG_FILE_SYSTEM_DIR, stage 6).
+	# from /devtools/llvm/cfg (CLANG_CONFIG_FILE_SYSTEM_DIR, stage 7).
 	cat > "$img/$CFG_LLVM/x86_64-unknown-motor.cfg" << EOF
 -resource-dir /$TOOLS/lib/clang/$CLANG_MAJOR
 EOF
@@ -523,9 +533,9 @@ int main() {
 EOF
 }
 
-# --- stage rustc + the Rust sysroot into the image ----------------------------
+# --- stage 10/12: stage rustc + the Rust sysroot into the image ----------------
 rustc_stage_image() {
-	log "staging rustc and the Rust sysroot into the rustc overlay"
+	log "stage 10/12: staging rustc and the Rust sysroot into the rustc overlay"
 	local rust_img="$RUSTC_IMG/devtools/rust"
 	mkdir -p "$RUSTC_IMG/devtools/bin" "$RUSTC_IMG/devtools/src/hello-world" "$rust_img/bin" \
 		"$rust_img/lib/rustlib/$TARGET"
@@ -594,10 +604,10 @@ EOF
 }
 
 
-# --- stage 8: the archives ---------------------------------------------------------
+# --- stage 12/12: the archives -------------------------------------------------
 # The Linux tar that writes the archives is built with the new host toolchain.
 build_tar() {
-	log "stage 8: building motor-os-tar's tar and packaging"
+	log "stage 12/12: building motor-os-tar's tar and packaging archives"
 	run_motor_cargo build --release --locked --manifest-path "$TAR_SOURCE/Cargo.toml" \
 		--target-dir "$WORK/motor-os-tar-target" --bin tar
 	TAR="$WORK/motor-os-tar-target/release/tar"
@@ -612,7 +622,10 @@ main() {
 	}
 	[ "$PROVISION" = false ] || provision_host
 
-	rm -rf "$WORK"
+	if [ -e "$WORK" ]; then
+		log "removing previous build directory: $WORK"
+		rm -rf "$WORK"
+	fi
 	mkdir -p "$WORK"
 	fetch_sources
 	out="$(dirname "$TOOLCHAIN_ROOT")"
@@ -620,6 +633,7 @@ main() {
 	log "Rust: $RUST_REV; LLVM: $LLVM_REV; mlibc: $MLIBC_REV"
 	export PYTHONDONTWRITEBYTECODE=1
 
+	log "stage 2/12: building the Linux-host toolchain"
 	toolchain_build_host "$RUST"
 	toolchain_fetch_rust_analyzer "$RUST" "$TOOLCHAIN_PREFIX"
 	configure_cross_driver
@@ -629,11 +643,14 @@ main() {
 	build_cxx_runtimes
 	build_native_llvm
 	llvm_stage_image
+	log "stage 9/12: building native rustc, rustfmt, and clippy-driver"
 	toolchain_build_native_rustc "$RUST"
 	rustc_stage_image
+	log "stage 11/12: building and staging native rust-analyzer"
 	toolchain_build_native_rust_analyzer "$RUST"
 	build_tar
 	toolchain_package "$TAR" "$out"
+	log "removing temporary build directory: $WORK"
 	rm -rf "$WORK"
 	log "built $TOOLCHAIN_NAME in $out"
 }

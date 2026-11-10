@@ -31,17 +31,20 @@ toolchain_build_host() {
 	toolchain_build_standalone_llvm "$rust/src/llvm-project" "$STANDALONE_LLVM_BUILD" || return
 	llvm_version="$("$STANDALONE_LLVM_BIN/llvm-config" --version)" || return
 	CLANG_MAJOR="${llvm_version%%.*}"
+	toolchain_log "staging host LLVM tools (Clang $CLANG_MAJOR) and cross wrappers"
 	toolchain_stage_host_tools "$TOOLCHAIN_PREFIX" "$STANDALONE_LLVM_BUILD" "$CLANG_MAJOR" || return
 	toolchain_generate_cross_wrappers "$SYSROOT" "$CLANG_MAJOR" || return
 	BOOTSTRAP_CONFIG="$WORK/bootstrap.toml"
 	toolchain_render_bootstrap_config "$TOOLCHAIN_PREFIX" "$SYSROOT" \
 		"$STANDALONE_LLVM_BIN" "$BOOTSTRAP_CACHE" "$TOOLCHAIN_NAME" \
 		"$RUST_BUILD_DIR" > "$BOOTSTRAP_CONFIG" || return
+	toolchain_log "running Rust stage-2 bootstrap (host and x86_64-unknown-motor)"
 	if ! (cd "$rust" && PYTHONDONTWRITEBYTECODE=1 \
 		MOTOR_RUST_ANALYZER_CARGO_CONFIG="$RUST_ANALYZER_CARGO_CONFIG" \
 		./x.py --config "$BOOTSTRAP_CONFIG" install --stage 2); then
 		toolchain_die "Rust bootstrap install failed"
 		return 1
 	fi
+	toolchain_log "validating installed Linux-host toolchain"
 	toolchain_validate_prefix "$TOOLCHAIN_PREFIX"
 }

@@ -22,6 +22,7 @@ toolchain_validate_standalone_llvm() {
 
 toolchain_build_standalone_llvm() {
 	local llvm="$1" build="$2"
+	toolchain_log "configuring standalone host LLVM/Clang/LLD"
 	cmake -S "$llvm/llvm" -B "$build" \
 		-G "$MOTOR_STANDALONE_LLVM_GENERATOR" \
 		-DCMAKE_BUILD_TYPE="$MOTOR_STANDALONE_LLVM_BUILD_TYPE" \
@@ -31,6 +32,8 @@ toolchain_build_standalone_llvm() {
 		-DLLVM_INCLUDE_TESTS="$MOTOR_STANDALONE_LLVM_INCLUDE_TESTS" \
 		-DCMAKE_C_COMPILER="$MOTOR_STANDALONE_LLVM_C_COMPILER" \
 		-DCMAKE_CXX_COMPILER="$MOTOR_STANDALONE_LLVM_CXX_COMPILER" || return
+	toolchain_log "building standalone host LLVM/Clang/LLD"
 	ninja -C "$build" "${MOTOR_STANDALONE_LLVM_NINJA_TARGETS[@]}" || return
+	toolchain_log "validating standalone host LLVM/Clang/LLD"
 	toolchain_validate_standalone_llvm "$build"
 }

@@ -25,6 +25,7 @@ toolchain_rust_analyzer_release() {
 toolchain_build_native_rust_analyzer() {
 	local rust="$1" binary destination library
 	toolchain_rust_analyzer_release || return
+	toolchain_log "building native rust-analyzer for x86_64-unknown-motor"
 	(cd "$rust/src/tools/rust-analyzer" && \
 		RUSTC="$TOOLCHAIN_PREFIX/bin/rustc" \
 		CARGO_PROFILE_RELEASE_OPT_LEVEL=s \
@@ -36,6 +37,7 @@ toolchain_build_native_rust_analyzer() {
 		--config "$RUST_ANALYZER_CARGO_CONFIG" \
 		--target-dir "$WORK/rust-analyzer") || return
 	binary="$WORK/rust-analyzer/x86_64-unknown-motor/release/rust-analyzer"
+	toolchain_log "validating and staging native rust-analyzer and rust-src"
 	toolchain_validate_native_elf "$binary" "$STANDALONE_LLVM_BIN/llvm-readelf" "$binary" || return
 	toolchain_validate_native_rust_analyzer "$binary" || return
 	library="$TOOLCHAIN_PREFIX/lib/rustlib/src/rust/library"

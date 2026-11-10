@@ -202,6 +202,7 @@ toolchain_build_native_rustc() {
 	toolchain_render_bootstrap_config "$TOOLCHAIN_PREFIX" "$SYSROOT" \
 		"$native_llvm_bin" "$BOOTSTRAP_CACHE" "$TOOLCHAIN_NAME" \
 		"$RUST_BUILD_DIR" > "$NATIVE_BOOTSTRAP_CONFIG" || return
+	toolchain_log "running native Rust stage-2 bootstrap for x86_64-unknown-motor"
 	if ! (cd "$rust" && PYTHONDONTWRITEBYTECODE=1 \
 		./x.py --config "$NATIVE_BOOTSTRAP_CONFIG" build \
 		--stage 2 compiler src/tools/rustfmt src/tools/clippy --host x86_64-unknown-motor \
@@ -212,6 +213,7 @@ toolchain_build_native_rustc() {
 	RUSTC_MAIN="$RUST_BUILD_DIR/x86_64-unknown-linux-gnu/stage2-rustc/x86_64-unknown-motor/release/rustc-main"
 	RUSTFMT_MAIN="$RUST_BUILD_DIR/x86_64-unknown-linux-gnu/stage2-tools/x86_64-unknown-motor/release/rustfmt"
 	CLIPPY_DRIVER_MAIN="$RUST_BUILD_DIR/x86_64-unknown-linux-gnu/stage2-tools/x86_64-unknown-motor/release/clippy-driver"
+	toolchain_log "validating native rustc, rustfmt, and clippy-driver ELF binaries"
 	toolchain_validate_native_rustc "$RUSTC_MAIN" || return
 	rustfmt_date="$(git -C "$rust" log -1 --date=short --format=%cd \
 		"$RUST_REV")" || return

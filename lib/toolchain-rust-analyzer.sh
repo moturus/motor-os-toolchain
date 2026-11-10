@@ -30,6 +30,7 @@ toolchain_render_rust_analyzer_config() {
 }
 
 toolchain_prepare_rust_analyzer() {
+	toolchain_log "downloading and patching crates for rust-analyzer (url $MOTOR_URL_VERSION, inventory $MOTOR_INVENTORY_VERSION)"
 	RUST_ANALYZER_URL_SOURCE="$(toolchain_rust_analyzer_crate "$TOOLCHAIN_ROOT/patches" \
 		"$WORK/patched-crates" url)" || return
 	RUST_ANALYZER_INVENTORY_SOURCE="$(toolchain_rust_analyzer_crate "$TOOLCHAIN_ROOT/patches" \
@@ -41,6 +42,7 @@ toolchain_prepare_rust_analyzer() {
 
 toolchain_fetch_rust_analyzer() {
 	local rust="$1" prefix="$2" manifest
+	toolchain_log "fetching rust-analyzer crate dependencies for offline native build"
 	# Cargo's cross-build resolver also requests host-platform dependencies.
 	# Fetch the full lockfile before the offline native build.
 	(cd "$rust/src/tools/rust-analyzer" && RUSTC="$prefix/bin/rustc" \

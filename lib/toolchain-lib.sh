@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Shared helpers of the Motor toolchain build.
 
+toolchain_log() {
+  if declare -F log >/dev/null 2>&1; then
+    log "$@"
+  else
+    printf '[build-toolchain] %s\n' "$*"
+  fi
+}
+
 toolchain_die() {
   echo "toolchain: $*" >&2
   return 1
@@ -9,10 +17,14 @@ toolchain_die() {
 # A shallow clone of the head of one branch of a repository, given as a URL or
 # a path.
 toolchain_fetch_branch() {
-  local repository="$1" branch="$2" directory="$3"
+  local repository="$1" branch="$2" directory="$3" display_dir="$3"
+  if [ -n "${TOOLCHAIN_ROOT:-}" ]; then
+    display_dir="${directory#"$TOOLCHAIN_ROOT/"}"
+  fi
+  toolchain_log "fetching $repository (branch $branch) into $display_dir"
   git init -q "$directory" &&
-    git -C "$directory" fetch -q --depth 1 "$repository" "refs/heads/$branch" &&
-    git -C "$directory" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    git -C "$directory" fetch --depth 1 "$repository" "refs/heads/$branch" &&
+    git -C "$directory" -c advice.detachedHead=false checkout FETCH_HEAD
 }
 
 # The name rustup, the archives, and the Motor OS checkout know the toolchain

@@ -47,68 +47,112 @@ echo "installed $name in $prefix"
 EOF
 }
 
-# A Rush script: Motor OS has no POSIX sh. It replaces /devtools/llvm and
-# /devtools/rust and copies the rest over what is there.
 toolchain_render_native_install() {
-	local name="$1"
-	cat <<EOF
-#!/system/bin/rush
-# Installs the Motor toolchain $name into /devtools:
-#   install.sh
-# An earlier installation in /devtools is replaced.
-name=$name
-EOF
-	cat <<'EOF'
-case "$0" in */*) here="${0%/*}" ;; *) here=. ;; esac
-[ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
-for overlay in llvm rustc rust-analyzer; do
-	[ -d "$here/images/$overlay/devtools" ] || {
-		echo "install.sh: missing toolchain payload: $overlay" >&2
-		exit 1
-	}
-done
-for tree in /devtools/llvm /devtools/rust; do
-	if [ -e "$tree" ]; then
-		rm -r "$tree" || exit 1
-	fi
-done
-for overlay in llvm rustc rust-analyzer; do
-	cp -r "$here/images/$overlay/devtools" / || exit 1
-done
-# The copies keep the modes the unpacking session gave the files, which no
-# lower role may execute. Make the programs executable by every role, and
-# the launchers editable by Interactive as well, as they are on the image.
-chmod rwxr-xr-x /devtools/llvm/bin/* /devtools/rust/bin/* || exit 1
-cd "$here/images" || exit 1
-for launcher in */devtools/bin/*; do
-	chmod rwxrwxr-x "/devtools/bin/${launcher##*/}" || exit 1
-done
-echo "installed $name in /devtools"
-EOF
+	printf '#!/user/bin/rush\nname=%s\n' "$1" || return
+	cat "$(dirname "${BASH_SOURCE[0]}")/toolchain-native-install.sh"
 }
 
-# Writes into the directory OUT the host archive (install.sh and the rustup
-# toolchain directory), the native archive (install.sh and the
-# overlays), and a .sha256 file for each, replacing earlier ones of the same
-# name. Each archive holds one directory named like it. The staged toolchain
-# and overlays move into the archive directories.
-toolchain_package() {
-	local tar="$1" out="$2" stage="$WORK/package" host native
-	host="motor-toolchain-$TOOLCHAIN_NAME-x86_64-linux"
-	native="motor-toolchain-$TOOLCHAIN_NAME"
-	mkdir -p "$stage/$host" "$stage/$native" || return
-	mv "$TOOLCHAIN_PREFIX" "$stage/$host/toolchain" || return
-	toolchain_render_linux_install "$TOOLCHAIN_NAME" > "$stage/$host/install.sh" || return
-	mv "$TOOLCHAIN_IMAGES" "$stage/$native/images" || return
-	toolchain_render_native_install "$TOOLCHAIN_NAME" > "$stage/$native/install.sh" || return
-	chmod 0755 "$stage/$host/install.sh" "$stage/$native/install.sh" || return
-	rm -f "$out/$host.tar.zst" "$out/$host.tar.zst.sha256" \
-		"$out/$native.tar.zst" "$out/$native.tar.zst.sha256" || return
-	toolchain_log "writing archive $out/$host.tar.zst"
-	"$tar" -c --zstd -f "$out/$host.tar.zst" -C "$stage" "$host" || return
-	toolchain_log "writing archive $out/$native.tar.zst"
-	"$tar" -c --zstd -f "$out/$native.tar.zst" -C "$stage" "$native" || return
-	toolchain_log "computing sha256 checksums"
-	(cd "$out" && sha256sum "$host.tar.zst" > "$host.tar.zst.sha256" &&
-		sha256sum "$native.tar.zst" > "$native.tar.zst.sha256")
-}
+toolchain_check_compiled_paths() (
+	set -euo pipefail
+	local root="$1" path status
+	find "$root" -type f \( -perm /111 -o -name '*.a' \) -print0 |
+	while IFS= read -r -d '' path; do
+		status=0
+		LC_ALL=C grep -aEq '/devtools/|/system/bin/(rush|sh)|/system/bin:' "$path" || status=$?
+		case "$status" in
+			1) ;;
+			0) echo "toolchain: obsolete compiled path in $path" >&2; exit 1 ;;
+			*) exit "$status" ;;
+		esac
+	done
+)
+
+toolchain_validate_images() (
+	set -euo pipefail
+	local images="$1" path overlay
+	for overlay in llvm rustc rust-analyzer libc motor helix sed lua quickjs javy wasmtime; do
+		[ -d "$images/$overlay" ] || {
+			echo "toolchain: missing overlay: $overlay" >&2; exit 1;
+		}
+	done
+	# Motor tar accepts regular files and directories. Newline-free names also
+	# let the guest installer batch find output without interpreting filenames.
+	find "$images" -mindepth 1 -print0 | while IFS= read -r -d '' path; do
+		[[ "$path" != *$'\n'* ]] && [ ! -L "$path" ] &&
+			{ [ -f "$path" ] || [ -d "$path" ]; } || {
+			echo "toolchain: unsupported archive member: $path" >&2; exit 1;
+		}
+	done
+	for overlay in "$images"/*; do
+		[ ! -e "$overlay/devtools" ] && [ ! -e "$overlay/system/bin" ] || {
+			echo "toolchain: obsolete image layout in $overlay" >&2; exit 1;
+		}
+	done
+	for path in llvm/user/lib/llvm/bin/llvm rustc/user/lib/rust/bin/rustc \
+		rustc/user/lib/rust/bin/rustfmt rustc/user/lib/rust/bin/clippy-driver \
+		rust-analyzer/user/lib/rust/bin/rust-analyzer \
+		motor/user/bin/dev/lorry motor/user/bin/dev/gix motor/user/bin/dev/mdbg \
+		motor/user/lib/imager/imager helix/user/lib/helix/hx \
+		sed/user/bin/dev/sed lua/user/bin/dev/lua \
+		quickjs/user/bin/dev/qjs quickjs/user/bin/dev/qjsc \
+		javy/user/bin/dev/javy javy/user/bin/dev/wasmi \
+		wasmtime/user/bin/dev/wasmtime wasmtime/user/bin/dev/wasmtime-rt; do
+		[ -f "$images/$path" ] && [ -x "$images/$path" ] || {
+			echo "toolchain: missing executable: $path" >&2; exit 1;
+		}
+	done
+	toolchain_check_compiled_paths "$images"
+)
+
+# Explicit inputs let the main repository repackage native overlays without a
+# compiler build or writes to the release directory. PREFIX adds the host archive.
+# Both input trees are disposable and are consumed after validation.
+toolchain_package() (
+	set -euo pipefail
+	local tar="$1" out="$2" name="$3" images="$4" prefix="${5:-}" stage package
+	[[ "$name" =~ ^x86_64-unknown-motor-[0-9][0-9A-Za-z.-]*$ ]] || {
+		echo "toolchain: invalid release name: $name" >&2; exit 1;
+	}
+	tar="$(realpath "$tar")"
+	images="$(realpath "$images")"
+	toolchain_validate_images "$images"
+	if [ -n "$prefix" ]; then
+		toolchain_check_compiled_paths "$prefix"
+		[ ! -e "$prefix/lib/rustlib/x86_64-unknown-motor/sysroot/devtools" ] || {
+			echo 'toolchain: obsolete cross-sysroot layout' >&2; exit 1;
+		}
+	fi
+	mkdir -p "$out"
+	out="$(realpath "$out")"
+	stage="$(mktemp -d "$out/.package.XXXXXX")"
+	trap 'rm -rf "$stage"' EXIT
+	package="motor-toolchain-$name"
+	mkdir "$stage/$package"
+	mv "$images" "$stage/$package/images"
+	toolchain_render_native_install "$name" > "$stage/$package/install.sh"
+	chmod 0755 "$stage/$package/install.sh"
+	toolchain_check_compiled_paths "$stage/$package/install.sh"
+	if [ -n "$prefix" ]; then
+		mkdir "$stage/$package-x86_64-linux"
+		mv "$prefix" "$stage/$package-x86_64-linux/toolchain"
+		toolchain_render_linux_install "$name" > "$stage/$package-x86_64-linux/install.sh"
+		chmod 0755 "$stage/$package-x86_64-linux/install.sh"
+	fi
+	for package in "$stage"/motor-toolchain-*; do
+		package="${package##*/}"
+		printf 'toolchain: writing archive %s\n' "$out/$package.tar.zst" >&2
+		"$tar" -c --zstd -f "$stage/$package.tar.zst" -C "$stage" "$package"
+		printf 'toolchain: computing sha256 checksum for %s\n' "$package.tar.zst" >&2
+		(cd "$stage" && sha256sum "$package.tar.zst" > "$package.tar.zst.sha256")
+		mv "$stage/$package.tar.zst" "$stage/$package.tar.zst.sha256" "$out/"
+	done
+)
+
+# The same entry point is used by make toolchain-archive.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+		echo "usage: $0 TAR OUTPUT NAME IMAGES [HOST_PREFIX]" >&2
+		exit 2
+	fi
+	toolchain_package "$@"
+fi

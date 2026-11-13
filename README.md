@@ -5,9 +5,9 @@ moturus forks of Rust (with its LLVM and Cargo gitlinks) and mlibc, and
 packages it as two archives. A release is named like Rust's own toolchains,
 by the target and the Rust version it is based on:
 `x86_64-unknown-motor-1.99.1`. That name is what rustup and the Motor OS
-checkout know it by. A beta is `x86_64-unknown-motor-1.100.0-beta`; a second
+checkout know it by. A beta is `x86_64-unknown-motor-1.100.0-beta`; a third
 release of the same Rust version, after a Motor-side change, is
-`x86_64-unknown-motor-1.99.1-2`. A published release never changes.
+`x86_64-unknown-motor-1.99.1-3`. A published release never changes.
 
 The toolchain consists of:
 
@@ -19,10 +19,15 @@ The toolchain consists of:
   wrappers;
 - the native toolchain, which runs inside Motor OS: rustc, rustfmt,
   clippy-driver, rust-analyzer, Clang, LLD, and the LLVM tools, with their
-  launchers, headers, libraries, Rust sources, and configuration.
+  launchers, headers, libraries, Rust sources, and configuration; Lorry, gix,
+  mdbg, Helix, sed, Lua, QuickJS, Javy/Wasmi, Wasmtime, and the documentation
+  site, plus the Linux-host imager.
 
-By default, nothing is read from a Motor OS checkout. Local development can
-explicitly use runtime crates from one; see "The Motor runtime crates" below.
+The build clones Motor OS alongside the compiler sources for the development
+programs and their build recipes. `--motor-os PATH` uses an existing Motor OS
+checkout instead, including its uncommitted changes. Runtime crates remain
+published dependencies unless explicitly overridden; see "The Motor runtime
+crates" below.
 
 ## Building
 
@@ -40,15 +45,15 @@ anything is built; leave it out once the host is set up.
 
 Every run builds everything from nothing. It fetches the heads of the branches
 that `versions.sh` names (shallow clones of the Rust fork with the submodules
-bootstrap needs, of mlibc, and of motor-os-tar) into `build/`, builds there,
+bootstrap needs, of mlibc, motor-os-tar, and Motor OS) into `build/`, builds there,
 writes the two archives and a checksum file for each next to the checkout,
 and removes `build/`:
 
 ```text
-../motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst
-../motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst.sha256
-../motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst
-../motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst.sha256
+../motor-toolchain-x86_64-unknown-motor-1.99.1-3-x86_64-linux.tar.zst
+../motor-toolchain-x86_64-unknown-motor-1.99.1-3-x86_64-linux.tar.zst.sha256
+../motor-toolchain-x86_64-unknown-motor-1.99.1-3.tar.zst
+../motor-toolchain-x86_64-unknown-motor-1.99.1-3.tar.zst.sha256
 ```
 
 A build replaces earlier archives of the same name there. With this checkout
@@ -59,8 +64,11 @@ A failed build leaves `build/` for inspection, and the next run deletes it
 and starts over. The build uses the network for the sources, Rust's Stage 0
 compiler, and the crates the build locks; Rust bootstrap runs Cargo with
 `--locked`, so a lockfile that does not match its manifests fails the build.
-On 24 cores a build takes about 50 minutes and needs about 30 GB of disk
-while it runs. Only one build may run in a checkout at a time.
+The development programs build after the compilers, using the new host
+toolchain directory through rustup. This stage needs no previously installed
+Motor compiler, native archive, image construction, or VM. With `--motor-os`,
+its build outputs and fetched external sources stay in the supplied checkout.
+Only one build may run in a checkout at a time.
 
 ## The archives
 
@@ -81,7 +89,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
 . "$HOME/.cargo/env"
 ```
 
-The examples below use release `x86_64-unknown-motor-1.99.1-2`; substitute
+The examples below use release `x86_64-unknown-motor-1.99.1-3`; substitute
 the name of the release you built throughout. On Linux, extraction with
 GNU tar requires `zstd` on `PATH`.
 
@@ -91,9 +99,9 @@ install the Linux-host archive there:
 
 ```sh
 cd ..
-sha256sum -c motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst.sha256
-tar -xaf motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux.tar.zst
-motor-toolchain-x86_64-unknown-motor-1.99.1-2-x86_64-linux/install.sh
+sha256sum -c motor-toolchain-x86_64-unknown-motor-1.99.1-3-x86_64-linux.tar.zst.sha256
+tar -xaf motor-toolchain-x86_64-unknown-motor-1.99.1-3-x86_64-linux.tar.zst
+motor-toolchain-x86_64-unknown-motor-1.99.1-3-x86_64-linux/install.sh
 ```
 
 If you obtained the archives separately, start in the directory containing
@@ -104,32 +112,41 @@ the Linux-host archive and its checksum file, and omit `cd ..`.
 `--prefix DIR`, replacing an earlier installation there, and runs
 `rustup toolchain link <name> <directory>`. The unpacked archive can be
 deleted afterwards. A `rust-toolchain.toml` with
-`channel = "x86_64-unknown-motor-1.99.1-2"` then selects it.
+`channel = "x86_64-unknown-motor-1.99.1-3"` then selects it.
 
 The native archive is a separate file on the Linux build host; installing
 the Linux-host archive does not transfer it into a VM. First copy
-`motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst` from the build output
+`motor-toolchain-x86_64-unknown-motor-1.99.1-3.tar.zst` from the build output
 directory into `/user/` in the Motor OS VM using your file-transfer setup.
 Then run the following commands inside the VM as Interactive. The native
-`install.sh` installs into `/devtools`, which that role owns:
+`install.sh` installs commands in `/user/bin/dev` and libraries in `/user/lib`:
 
 ```sh
 mkdir /user/toolchain
 cd /user/toolchain
-tar -x -f /user/motor-toolchain-x86_64-unknown-motor-1.99.1-2.tar.zst
-motor-toolchain-x86_64-unknown-motor-1.99.1-2/install.sh
+tar -x -f /user/motor-toolchain-x86_64-unknown-motor-1.99.1-3.tar.zst
+motor-toolchain-x86_64-unknown-motor-1.99.1-3/install.sh
 ```
 
 Use an empty extraction directory; if `/user/toolchain` already exists,
 choose another directory for the first two commands.
 
-It replaces `/devtools/llvm` and `/devtools/rust` with the requested
-toolchain and copies the launchers in `/devtools/bin` and the examples in
-`/devtools/src/hello-world`. The copies keep the modes the
-unpacking session gave the files, which no lower role may execute, so it then
-makes the programs executable by every role, and the launchers editable by
-Interactive as well, as they are on the image. mlibc's configuration stays in
-the image's `/system/cfg/libc`.
+It replaces the owned library trees, installs commands through temporary
+files, and adds examples in `/none/dev/hello-world`. Existing configuration
+and examples are preserved. Programs receive mode `rwxrwxr-x` and library
+data `rwxrw-r--`; None can use the toolchain but cannot modify it. mlibc's
+configuration stays in the image's `/system/cfg/libc`. Existing directory modes
+are preserved; newly installed examples use `rwxrw-rw-` for data files.
+
+The installer adds `/user/bin/dev` once to the console and SSH PATH settings
+and asks for a reboot. `/user/cfg/cargo/config.toml` supplies shared C/C++
+target defaults for Cargo and Lorry. Reinstallation preserves that file.
+
+For development-program changes, `make toolchain-archive BUILD=release` in
+the Motor OS checkout repackages the native archive without rebuilding the
+compilers. It uses `toolchain_package` from this checkout and writes only
+under Motor OS's `build/` directory. Tests always repackage current payloads;
+the packager consumes the disposable input trees supplied by both callers.
 
 ## The host toolchain
 
@@ -137,7 +154,7 @@ The host toolchain is a rustup toolchain directory, laid out the way Rust
 lays out its own:
 
 ```text
-x86_64-unknown-motor-1.99.1-2/
+x86_64-unknown-motor-1.99.1-3/
   bin/                                          rustc, rustdoc, cargo, cargo-clippy,
                                                 clippy-driver, rustfmt, cargo-fmt,
                                                 rust-analyzer
@@ -151,7 +168,7 @@ x86_64-unknown-motor-1.99.1-2/
   lib/rustlib/x86_64-unknown-motor/lib/         Motor std
   lib/rustlib/x86_64-unknown-motor/sysroot/     the cross sysroot: bin/{motor-clang,
                                                 motor-clang++, motor-rust-cc} and
-                                                devtools/llvm/{include,lib}
+                                                user/lib/llvm/{include,lib}
   lib/rustlib/src/rust/library/                 rust-src
 ```
 
@@ -176,35 +193,36 @@ Motor; it names the C runtime libraries itself.
 ## The native toolchain
 
 The native toolchain compiles and analyzes programs inside a Motor OS VM.
-It has five executable binaries, installed at these paths:
+Its compiler components have five executable binaries, installed at these paths:
 
 | File | Purpose |
 |---|---|
-| `/devtools/llvm/bin/llvm` | Clang, LLD, and the LLVM tools in one multicall binary; the first argument selects the tool |
-| `/devtools/rust/bin/rustc` | Rust compiler |
-| `/devtools/rust/bin/rustfmt` | Rust formatter |
-| `/devtools/rust/bin/clippy-driver` | Rust compiler driver with Clippy's lints |
-| `/devtools/rust/bin/rust-analyzer` | Rust language server |
+| `/user/lib/llvm/bin/llvm` | Clang, LLD, and the LLVM tools in one multicall binary; the first argument selects the tool |
+| `/user/lib/rust/bin/rustc` | Rust compiler |
+| `/user/lib/rust/bin/rustfmt` | Rust formatter |
+| `/user/lib/rust/bin/clippy-driver` | Rust compiler driver with Clippy's lints |
+| `/user/lib/rust/bin/rust-analyzer` | Rust language server |
 
-Five Rush launcher scripts provide the compiler commands in `/devtools/bin`:
+Rush launcher scripts provide the compiler commands in `/user/bin/dev`:
 
 | File | Command it runs |
 |---|---|
-| `/devtools/bin/cc` | `/devtools/llvm/bin/llvm clang` |
-| `/devtools/bin/c++` | `/devtools/llvm/bin/llvm clang --driver-mode=g++` |
-| `/devtools/bin/rustc` | `/devtools/rust/bin/rustc` |
-| `/devtools/bin/rustfmt` | `/devtools/rust/bin/rustfmt` |
-| `/devtools/bin/clippy-driver` | `/devtools/rust/bin/clippy-driver` |
+| `/user/bin/dev/cc` | `/user/lib/llvm/bin/llvm clang` |
+| `/user/bin/dev/c++` | `/user/lib/llvm/bin/llvm clang --driver-mode=g++` |
+| `/user/bin/dev/ar` | `/user/lib/llvm/bin/llvm ar` |
+| `/user/bin/dev/rustc` | `/user/lib/rust/bin/rustc` |
+| `/user/bin/dev/rustfmt` | `/user/lib/rust/bin/rustfmt` |
+| `/user/bin/dev/clippy-driver` | `/user/lib/rust/bin/clippy-driver` |
+| `/user/bin/dev/rust-analyzer` | `/user/lib/rust/bin/rust-analyzer` |
 
-Each launcher forwards its arguments. Rust-analyzer is invoked directly at
-its binary path. Rustc uses `cc` as its default linker.
+Each launcher forwards its arguments. Rustc uses `cc` as its default linker.
 
 The supporting files are installed below. Header, Rust library, and source
 trees are listed as directories because their individual filenames depend
 on the compiler version; `23` is the Clang major version in this release.
 
 ```text
-/devtools/
+/user/lib/
   llvm/
     cfg/x86_64-unknown-motor.cfg       Clang's resource-directory setting
     include/                         mlibc headers and moto_rt.h
@@ -230,10 +248,10 @@ on the compiler version; `23` is the Clang major version in this release.
     x86_64-unknown-motor/lib/         Rust libraries (.rlib and .rmeta files,
                                      plus self-contained linker support)
     src/rust/library/                rust-src, used by rust-analyzer
-  src/hello-world/
-    hello.c                          C example
-    hello.cpp                        C++ example
-    hello.rs                         Rust example
+/none/dev/hello-world/
+  hello.c                            C example
+  hello.cpp                          C++ example
+  hello.rs                           Rust example
 ```
 
 The `libdl.a` through `libssp_nonshared.a` archives are mlibc's companion
@@ -250,7 +268,7 @@ A build takes the heads of the branches that `versions.sh` names:
    with the updated gitlink, and mlibc.
 2. Name the branches: `MOTOR_RUST_BRANCH` (whose head selects LLVM, Cargo, and
    the other submodules through its gitlinks), `MOTOR_MLIBC_BRANCH`, and
-   `MOTOR_TAR_BRANCH`.
+   `MOTOR_TAR_BRANCH`, and `MOTOR_OS_BRANCH`.
 3. Name the release: a new Rust version restarts `MOTOR_TOOLCHAIN_RELEASE` at
    1, and any change under an already published name increments it. The
    Rust version and the beta suffix come from the fork's `src/version` and
@@ -268,11 +286,13 @@ by the Motor OS build the same way; they are not published.
 
 ## The Motor runtime crates
 
-Three Motor OS crates enter the toolchain: `moto-rt` (linked by Rust std and,
+The compiler builds use three Motor OS crates: `moto-rt` (linked by Rust std and,
 through the `ctrlc` fork, by the compiler tools built for Motor), `moto-sys`
 (used by the shim), and `moto-rt-cabi` (the shim itself). The first two come
-from crates.io and the third from the mlibc fork. In the default recipe, no
-path, Git source, or `[patch]` points at a Motor OS checkout. Every reference:
+from crates.io and the third from the mlibc fork. In these compiler recipes, no
+path, Git source, or `[patch]` points at a Motor OS checkout. Development
+programs use the dependencies selected by Motor OS and their own forks.
+The compiler references are:
 
 | Repository | File | Reference |
 |---|---|---|

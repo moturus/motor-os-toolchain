@@ -44,17 +44,22 @@ toolchain_build_native_rust_analyzer() {
 	[ -f "$library/core/src/lib.rs" ] && [ -f "$library/std/src/lib.rs" ] ||
 		toolchain_die 'rust-src is incomplete' || return
 	destination="$TOOLCHAIN_IMAGES/rust-analyzer"
-	mkdir -p "$destination/devtools/rust/bin" "$destination/devtools/rust/lib/rustlib/src/rust" || return
+	mkdir -p "$destination/user/bin/dev" "$destination/user/lib/rust/bin" "$destination/user/lib/rust/lib/rustlib/src/rust" || return
 	# The compiler identity is in this non-allocated section; stripping it
 	# would discard provenance while leaving the server's own version intact.
 	"$STANDALONE_LLVM_BIN/llvm-strip" --keep-section=.comment \
-		-o "$destination/devtools/rust/bin/rust-analyzer" "$binary" || return
-	chmod 755 "$destination/devtools/rust/bin/rust-analyzer" || return
-	toolchain_validate_native_elf "$destination/devtools/rust/bin/rust-analyzer" \
+		-o "$destination/user/lib/rust/bin/rust-analyzer" "$binary" || return
+	chmod 755 "$destination/user/lib/rust/bin/rust-analyzer" || return
+	toolchain_validate_native_elf "$destination/user/lib/rust/bin/rust-analyzer" \
 		"$STANDALONE_LLVM_BIN/llvm-readelf" "$binary" || return
-	toolchain_validate_native_rust_analyzer "$destination/devtools/rust/bin/rust-analyzer" || return
-	cp -a "$library" "$destination/devtools/rust/lib/rustlib/src/rust/" || return
+	toolchain_validate_native_rust_analyzer "$destination/user/lib/rust/bin/rust-analyzer" || return
+	cp -a "$library" "$destination/user/lib/rust/lib/rustlib/src/rust/" || return
+	cat > "$destination/user/bin/dev/rust-analyzer" << 'EOF'
+#!/user/bin/rush
+exec /user/lib/rust/bin/rust-analyzer "$@"
+EOF
+	chmod 755 "$destination/user/bin/dev/rust-analyzer" || return
 	# These are analysis inputs, including host-only CI scripts, not guest tools.
-	find "$destination/devtools/rust/lib/rustlib/src/rust/library" -type f \
+	find "$destination/user/lib/rust/lib/rustlib/src/rust/library" -type f \
 		-exec chmod a-x {} +
 }

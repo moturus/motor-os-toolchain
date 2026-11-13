@@ -101,7 +101,7 @@ exec "\$host/bin/clang" --no-default-config \\
   -resource-dir "\$host/lib/clang/$clang_major" \\
   --target=x86_64-unknown-motor --sysroot="\$sysroot" "\$@" \\
   -Wl,--start-group \\
-  "\$sysroot/devtools/llvm/lib/crt1.o" \\
+  "\$sysroot/user/lib/llvm/lib/crt1.o" \\
   -lmoto_rt_cabi -lc++ -lc++abi -lunwind -lc -lclang_rt.builtins-x86_64 \\
   -Wl,--end-group
 EOF

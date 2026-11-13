@@ -11,7 +11,7 @@
 # A repository may also be a local path; see "Changing the toolchain" in
 # README.md.
 
-MOTOR_TOOLCHAIN_RELEASE="2"
+MOTOR_TOOLCHAIN_RELEASE="3"
 
 # The Rust fork. Its gitlinks select LLVM, Cargo, and the other submodules.
 MOTOR_RUST_REPOSITORY="https://github.com/moturus/rust.git"
@@ -27,6 +27,10 @@ MOTOR_MLIBC_BRANCH="motor-os-rustc"
 # The tar that creates the archives.
 MOTOR_TAR_REPOSITORY="https://github.com/moturus/motor-os-tar.git"
 MOTOR_TAR_BRANCH="master"
+
+# Development programs and their build recipes; --motor-os uses a local checkout.
+MOTOR_OS_REPOSITORY="https://github.com/moturus/motor-os.git"
+MOTOR_OS_BRANCH="main"
 
 MOTOR_LLVM_TARGETS="X86"
 

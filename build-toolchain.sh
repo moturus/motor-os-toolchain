@@ -7,8 +7,9 @@
 # the LLVM multicall, headers, and libraries).
 #
 # The sources are the moturus forks of Rust (with its LLVM and Cargo gitlinks)
-# and mlibc at the heads of the branches versions.sh names, and the Motor
-# runtime crates from crates.io. Nothing is read from a Motor OS checkout.
+# and mlibc at the heads of the branches versions.sh names, the Motor runtime
+# crates from crates.io, and Motor OS for the development programs. --motor-os
+# selects an existing Motor OS checkout instead of cloning it into build/.
 #
 # Every run starts from nothing: it fetches the sources into build/, builds
 # everything there, writes the two archives and their checksums next to this
@@ -23,7 +24,7 @@ trap 'die "failed at line $LINENO"' ERR
 
 usage() {
 	cat << 'EOF'
-Usage: ./build-toolchain.sh [--provision] [--dev]
+Usage: ./build-toolchain.sh [--provision] [--dev] [--motor-os PATH]
 
 Build the Motor toolchain that versions.sh names, x86_64-unknown-motor-<Rust
 version>, and write next to this checkout (into its parent directory):
@@ -33,6 +34,8 @@ and a .sha256 checksum file for each.
 
   --provision  install missing host packages (with sudo) and rustup first
   --dev        name the toolchain <name>-dev: a local build, not a release
+  --motor-os PATH
+               build development programs from this checkout instead of cloning
 
 The build fetches sources and crates from the network, works in build/, and
 removes it when done; a failed build leaves it for inspection.
@@ -42,11 +45,21 @@ EOF
 parse_options() {
 	PROVISION=false
 	DEV=false
+	MOTOR_SOURCE=
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 			-h|--help) usage; return 2 ;;
 			--provision) PROVISION=true; shift ;;
 			--dev) DEV=true; shift ;;
+			--motor-os)
+				[ "$#" -ge 2 ] || die '--motor-os requires a checkout path'
+				MOTOR_SOURCE="$(realpath -e "$2")" || die "Motor OS checkout is missing: $2"
+				[ -e "$MOTOR_SOURCE/.git" ] && [ -f "$MOTOR_SOURCE/src/build-motor-os.sh" ] ||
+					die "not a Motor OS checkout: $MOTOR_SOURCE"
+				case "$MOTOR_SOURCE/" in
+					"$WORK/"*) die '--motor-os must be outside the disposable build directory' ;;
+				esac
+				shift 2 ;;
 			*) usage >&2; die "unknown argument: $1" ;;
 		esac
 	done
@@ -64,8 +77,8 @@ TARGET=x86_64-unknown-motor
 
 # On-image directory prefixes (mirrored inside the cross sysroot). Keep these in
 # sync with clang/lib/Driver/ToolChains/Motor.cpp and mlibc's MLIBC_SYSCONFDIR.
-TOOLS="devtools/llvm"              # headers + libraries
-CFG_LLVM="devtools/llvm/cfg"       # clang <triple>.cfg
+TOOLS="user/lib/llvm"              # headers + libraries
+CFG_LLVM="user/lib/llvm/cfg"       # clang <triple>.cfg
 CFG_LIBC="system/cfg/libc"         # mlibc config files (resolv.conf, ...)
 
 # Everything a build reads and writes, besides Cargo's and rustup's caches.
@@ -152,12 +165,25 @@ fetch_sources() {
 	git -C "$RUST" submodule update --init --depth 1 "${RUST_SUBMODULES[@]}"
 	toolchain_fetch_branch "$MOTOR_MLIBC_REPOSITORY" "$MOTOR_MLIBC_BRANCH" "$MLIBC"
 	toolchain_fetch_branch "$MOTOR_TAR_REPOSITORY" "$MOTOR_TAR_BRANCH" "$TAR_SOURCE"
+	fetch_motor_source
 	RUST_VERSION="$(cat "$RUST/src/version")"
 	RUST_REV="$(git -C "$RUST" rev-parse HEAD)"
 	LLVM_REV="$(git -C "$LLVM" rev-parse HEAD)"
 	CARGO_REV="$(git -C "$RUST/src/tools/cargo" rev-parse HEAD)"
 	MLIBC_REV="$(git -C "$MLIBC" rev-parse HEAD)"
 	TOOLCHAIN_NAME="$(toolchain_name "$RUST" "$MOTOR_TOOLCHAIN_RELEASE" "$DEV")"
+}
+
+fetch_motor_source() {
+	if [ -z "$MOTOR_SOURCE" ]; then
+		MOTOR_SOURCE="$WORK/motor-os"
+		toolchain_fetch_branch "$MOTOR_OS_REPOSITORY" "$MOTOR_OS_BRANCH" "$MOTOR_SOURCE"
+	fi
+}
+
+build_motor_tools() {
+	log "building the development programs from $MOTOR_SOURCE"
+	bash "$MOTOR_SOURCE/src/build-motor-os.sh" --toolchain-overlays "$TOOLCHAIN_PREFIX" "$TOOLCHAIN_IMAGES"
 }
 
 # The C stages compile and link with the standalone Clang and name the runtimes
@@ -220,7 +246,7 @@ build_builtins() {
 	log "stage 4/12: building compiler-rt builtins"
 	# -ffreestanding: the builtins are freestanding, and it keeps clang's
 	# resource limits.h/stdint.h from #include_next-ing into the host's glibc
-	# headers. The Motor ToolChain adds <sysroot>/devtools/llvm/include, which
+	# headers. The Motor ToolChain adds <sysroot>/user/lib/llvm/include, which
 	# is empty under the cross sysroot at this stage (mlibc's headers do not
 	# exist yet). (The old host cfg used to supply -ffreestanding here.)
 	#
@@ -424,7 +450,7 @@ build_native_llvm() {
 llvm_stage_image() {
 	log "stage 8/12: staging the C/C++ toolchain and libc configuration into the overlays"
 	local img="$LLVM_IMG"
-	mkdir -p "$img/devtools/bin" "$img/devtools/src/hello-world" \
+	mkdir -p "$img/user/bin/dev" "$img/none/dev/hello-world" \
 		"$img/$TOOLS/bin" "$img/$TOOLS/lib" \
 		"$img/$CFG_LLVM" "$LIBC_IMG/$CFG_LIBC"
 
@@ -445,14 +471,14 @@ llvm_stage_image() {
 	done
 	cp "$SYSROOT/$TOOLS/lib/crt1.o" "$img/$TOOLS/lib/"
 
-	# The on-image LLVM multicall lives under /devtools/llvm/bin, mirroring the
-	# Rust toolchain at /devtools/rust/bin (build-rustc.md). Its clang config and
-	# resource dir are pinned by absolute path (the /devtools/llvm/cfg .cfg + the baked
+	# The on-image LLVM multicall lives under /user/lib/llvm/bin, mirroring the
+	# Rust toolchain at /user/lib/rust/bin (build-rustc.md). Its clang config and
+	# resource dir are pinned by absolute path (the /user/lib/llvm/cfg .cfg + the baked
 	# CLANG_CONFIG_FILE_SYSTEM_DIR), and its ld.lld self-dispatch uses the running
 	# exe's own path, so the binary works wherever it is placed.
 	"$B/llvm-strip" -o "$img/$TOOLS/bin/llvm" "$NATIVE_LLVM_BUILD/bin/llvm"
 
-	# /devtools/bin/cc — the C compiler / linker driver: a Rush script (not
+	# /user/bin/dev/cc — the C compiler / linker driver: a Rush script (not
 	# a compiled binary) over the llvm multicall's clang. rustc's default linker
 	# is the bare name `cc`, resolved through the dev image PATH, so a native
 	# `rustc hello.rs -o hello` links with no `-C linker=` flag — exactly as rustc
@@ -464,27 +490,31 @@ llvm_stage_image() {
 	# pure-Rust hello is ~113 KB, not 8 MB (docs/libc_start_redesign.md). Rust
 	# programs that *want* mlibc opt back into the ToolChain recipe with
 	# `-C link-self-contained=no -C default-linker-libraries=yes` (build-rustc.md).
-	cat > "$img/devtools/bin/cc" << 'EOF'
-#!/system/bin/rush
+	cat > "$img/user/bin/dev/cc" << 'EOF'
+#!/user/bin/rush
 # cc — Motor OS's system C compiler / linker driver. See docs/build-llvm.md.
 # A pass-through: clang's Motor ToolChain owns the link recipe and honors
 # -nostartfiles/-nodefaultlibs (rustc's pure-Rust links stay mlibc-free).
-exec /devtools/llvm/bin/llvm clang "$@"
+exec /user/lib/llvm/bin/llvm clang "$@"
 EOF
 
-	# /devtools/bin/c++ — same, in C++ driver mode (adds -lc++ at link).
+	# /user/bin/dev/c++ — same, in C++ driver mode (adds -lc++ at link).
 	# rather than a `clang++` subcommand: the multicall dispatches on the first
 	# argument, and `clang++` is not a registered subcommand name.
-	cat > "$img/devtools/bin/c++" << 'EOF'
-#!/system/bin/rush
+	cat > "$img/user/bin/dev/c++" << 'EOF'
+#!/user/bin/rush
 # c++ — Motor OS's system C++ compiler / linker driver. See docs/build-llvm.md.
-exec /devtools/llvm/bin/llvm clang --driver-mode=g++ "$@"
+exec /user/lib/llvm/bin/llvm clang --driver-mode=g++ "$@"
 EOF
-	chmod +x "$img/devtools/bin/cc" "$img/devtools/bin/c++"
+	cat > "$img/user/bin/dev/ar" << 'EOF'
+#!/user/bin/rush
+exec /user/lib/llvm/bin/llvm ar "$@"
+EOF
+	chmod +x "$img/user/bin/dev/cc" "$img/user/bin/dev/c++" "$img/user/bin/dev/ar"
 
 	# The image driver config: only the resource dir needs pinning (the full
 	# link/include recipe lives in the Motor ToolChain now). Clang auto-loads it
-	# from /devtools/llvm/cfg (CLANG_CONFIG_FILE_SYSTEM_DIR, stage 7).
+	# from /user/lib/llvm/cfg (CLANG_CONFIG_FILE_SYSTEM_DIR, stage 7).
 	cat > "$img/$CFG_LLVM/x86_64-unknown-motor.cfg" << EOF
 -resource-dir /$TOOLS/lib/clang/$CLANG_MAJOR
 EOF
@@ -502,11 +532,11 @@ EOF
 ::1 motor-dns-test
 EOF
 	cat > "$LIBC_IMG/$CFG_LIBC/shells" << 'EOF'
-/system/bin/sh
-/system/bin/rush
+/user/bin/sh
+/user/bin/rush
 EOF
 
-	cat > "$img/devtools/src/hello-world/hello.c" << 'EOF'
+	cat > "$img/none/dev/hello-world/hello.c" << 'EOF'
 #include <stdio.h>
 
 int main(void) {
@@ -514,7 +544,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	cat > "$img/devtools/src/hello-world/hello.cpp" << 'EOF'
+	cat > "$img/none/dev/hello-world/hello.cpp" << 'EOF'
 #include <iostream>
 #include <string>
 #include <vector>
@@ -536,35 +566,35 @@ EOF
 # --- stage 10/12: stage rustc + the Rust sysroot into the image ----------------
 rustc_stage_image() {
 	log "stage 10/12: staging rustc and the Rust sysroot into the rustc overlay"
-	local rust_img="$RUSTC_IMG/devtools/rust"
-	mkdir -p "$RUSTC_IMG/devtools/bin" "$RUSTC_IMG/devtools/src/hello-world" "$rust_img/bin" \
+	local rust_img="$RUSTC_IMG/user/lib/rust"
+	mkdir -p "$RUSTC_IMG/user/bin/dev" "$RUSTC_IMG/none/dev/hello-world" "$rust_img/bin" \
 		"$rust_img/lib/rustlib/$TARGET"
 
 	# The compiler, stripped (~154 MB -> ~98 MB).
 	"$B/llvm-strip" -o "$rust_img/bin/rustc" "$RUSTC_MAIN"
 	toolchain_validate_native_elf "$rust_img/bin/rustc" "$B/llvm-readelf" "$RUSTC_MAIN" ||
 		die "staged rustc ELF validation failed"
-	cat > "$RUSTC_IMG/devtools/bin/rustc" << 'EOF'
-#!/system/bin/rush
-exec /devtools/rust/bin/rustc "$@"
+	cat > "$RUSTC_IMG/user/bin/dev/rustc" << 'EOF'
+#!/user/bin/rush
+exec /user/lib/rust/bin/rustc "$@"
 EOF
-	chmod +x "$RUSTC_IMG/devtools/bin/rustc"
+	chmod +x "$RUSTC_IMG/user/bin/dev/rustc"
 	"$B/llvm-strip" -o "$rust_img/bin/rustfmt" "$RUSTFMT_MAIN"
 	toolchain_validate_native_elf "$rust_img/bin/rustfmt" "$B/llvm-readelf" "$RUSTFMT_MAIN" ||
 		die "staged rustfmt ELF validation failed"
-	cat > "$RUSTC_IMG/devtools/bin/rustfmt" << 'EOF'
-#!/system/bin/rush
-exec /devtools/rust/bin/rustfmt "$@"
+	cat > "$RUSTC_IMG/user/bin/dev/rustfmt" << 'EOF'
+#!/user/bin/rush
+exec /user/lib/rust/bin/rustfmt "$@"
 EOF
-	chmod +x "$RUSTC_IMG/devtools/bin/rustfmt"
+	chmod +x "$RUSTC_IMG/user/bin/dev/rustfmt"
 	"$B/llvm-strip" -o "$rust_img/bin/clippy-driver" "$CLIPPY_DRIVER_MAIN"
 	toolchain_validate_native_clippy_driver "$rust_img/bin/clippy-driver" "$CLIPPY_DRIVER_MAIN" ||
 		die "staged clippy-driver validation failed"
-	cat > "$RUSTC_IMG/devtools/bin/clippy-driver" << 'EOF'
-#!/system/bin/rush
-exec /devtools/rust/bin/clippy-driver "$@"
+	cat > "$RUSTC_IMG/user/bin/dev/clippy-driver" << 'EOF'
+#!/user/bin/rush
+exec /user/lib/rust/bin/clippy-driver "$@"
 EOF
-	chmod +x "$RUSTC_IMG/devtools/bin/clippy-driver"
+	chmod +x "$RUSTC_IMG/user/bin/dev/clippy-driver"
 	# A binary that still carries mlibc's operator-delete panic stub would
 	# abort at runtime; the stub guard must have taken effect.
 	if grep -aq 'operator delete called! delete expressions' "$rust_img/bin/rustc"; then
@@ -584,7 +614,7 @@ EOF
 	# LLVM stage — nothing to stage here.)
 
 	# A sample source exercising HashMap, sorting, and thread spawn/join.
-	cat > "$RUSTC_IMG/devtools/src/hello-world/hello.rs" << 'EOF'
+	cat > "$RUSTC_IMG/none/dev/hello-world/hello.rs" << 'EOF'
 use std::collections::HashMap;
 
 fn main() {
@@ -649,10 +679,13 @@ main() {
 	log "stage 11/12: building and staging native rust-analyzer"
 	toolchain_build_native_rust_analyzer "$RUST"
 	build_tar
-	toolchain_package "$TAR" "$out"
+	build_motor_tools
+	toolchain_package "$TAR" "$out" "$TOOLCHAIN_NAME" "$TOOLCHAIN_IMAGES" "$TOOLCHAIN_PREFIX"
 	log "removing temporary build directory: $WORK"
 	rm -rf "$WORK"
 	log "built $TOOLCHAIN_NAME in $out"
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	main "$@"
+fi

@@ -1,0 +1,23 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index d5735ffc..94524ec6 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2194,7 +2194,6 @@ dependencies = [
+ name = "jobserver"
+-version = "0.1.34"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
++version = "0.1.35"
++source = "git+https://github.com/moturus/jobserver-rs.git?rev=bae15a7637b8d1660b96a4084342c1ae0a8b01de#bae15a7637b8d1660b96a4084342c1ae0a8b01de"
+ dependencies = [
+- "getrandom 0.3.3",
++ "getrandom 0.4.2",
+  "libc",
+diff --git a/Cargo.toml b/Cargo.toml
+index 5c29f95d..3a625af8 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -114,2 +114,3 @@ codegen-units = 1
+ [patch.crates-io]
++jobserver = { git = "https://github.com/moturus/jobserver-rs.git", rev = "bae15a7637b8d1660b96a4084342c1ae0a8b01de" }
+ libloading = { git = "https://github.com/moturus/rust_libloading.git", rev = "fb65a92af40bb114deee370ecf4164be74c3fb65" }

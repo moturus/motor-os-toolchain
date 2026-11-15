@@ -157,6 +157,8 @@ RUST_SUBMODULES=(src/tools/cargo library/backtrace src/doc/book
 fetch_sources() {
 	log "stage 1/12: fetching the sources"
 	toolchain_fetch_branch "$MOTOR_RUST_REPOSITORY" "$MOTOR_RUST_BRANCH" "$RUST"
+	log "applying the pinned Rust jobserver dependency override"
+	git -C "$RUST" apply "$TOOLCHAIN_ROOT/patches/rust-jobserver.patch"
 	log "fetching LLVM submodule ($MOTOR_LLVM_REPOSITORY) into build/rust/src/llvm-project"
 	git -C "$RUST" config submodule.src/llvm-project.url "$MOTOR_LLVM_REPOSITORY"
 	# Permit local LLVM checkouts only for this explicitly configured submodule.

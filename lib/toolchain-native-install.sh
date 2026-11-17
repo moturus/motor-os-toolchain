@@ -4,6 +4,11 @@ set -o pipefail
 export PATH=/user/bin:/user/bin/dev
 case "$0" in */*) here="${0%/*}" ;; *) here=. ;; esac
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
+# Images without the login profile set PATH elsewhere; refuse before changing anything.
+[ -f /user/cfg/profile ] || {
+    echo "install.sh: /user/cfg/profile is missing; this image is too old for this toolchain" >&2
+    exit 1
+}
 
 for overlay in "$here"/images/*; do
     [ -d "$overlay" ] || {
@@ -89,9 +94,10 @@ for overlay in "$here"/images/*; do
     fi
 done
 
-# Keep custom console PATH settings, and append the development directory once.
-if [ -z "$(sed -n '/^# Motor toolchain PATH$/p' /user/cfg/rush.cfg)" ]; then
-    cat >> /user/cfg/rush.cfg <<'PATH_CONFIG'
+# Keep custom profile settings, and append the development directory once.
+# Login shells read the profile: the console's, and each SSH session's.
+if [ -z "$(sed -n '/^# Motor toolchain PATH$/p' /user/cfg/profile)" ]; then
+    cat >> /user/cfg/profile <<'PATH_CONFIG'
 
 # Motor toolchain PATH
 case ":$PATH:" in
@@ -100,17 +106,6 @@ case ":$PATH:" in
 esac
 PATH_CONFIG
 fi
-ssh_path=$(sed -nE "s/^[[:space:]]*path[[:space:]]*=[[:space:]]*['\"]([^'\"]*)['\"][[:space:]]*(#.*)?$/\1/p" /user/cfg/sshd.toml)
-[ -n "$ssh_path" ] || { echo "install.sh: cannot read path in /user/cfg/sshd.toml" >&2; exit 1; }
-case ":$ssh_path:" in
-    *:/user/bin/dev:*) ;;
-    *)
-        # sed -i stages beside the original with permissions readable by None.
-        # Rush captures $(...) in TMPDIR; keep that capture private as well.
-        export TMPDIR=/user/tmp
-        ssh_config=$(sed -E "s|^([[:space:]]*path[[:space:]]*=[[:space:]]*['\"])([^'\"]*)(['\"].*)$|\1\2:/user/bin/dev\3|" /user/cfg/sshd.toml) || exit 1
-        printf '%s\n' "$ssh_config" > /user/cfg/sshd.toml || exit 1
-        ;;
-esac
 echo "installed $name in /user/bin/dev and /user/lib"
-echo "Reboot to activate the development PATH for console and SSH sessions."
+echo "New console and SSH sessions find the development tools."
+echo "To use them in this shell, run: . /user/cfg/profile"

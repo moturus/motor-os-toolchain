@@ -184,6 +184,8 @@ fetch_motor_source() {
 }
 
 build_motor_tools() {
+	log "fetching locked dependencies for javy-smoke's offline prepare-inputs run"
+	run_motor_cargo fetch --locked --manifest-path "$MOTOR_SOURCE/src/sys/tests/javy-smoke/Cargo.toml"
 	log "building the development programs from $MOTOR_SOURCE"
 	bash "$MOTOR_SOURCE/src/build-motor-os.sh" --toolchain-overlays "$TOOLCHAIN_PREFIX" "$TOOLCHAIN_IMAGES"
 }

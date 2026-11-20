@@ -80,8 +80,9 @@ motor-os-tar's `tar` writes them; GNU tar reads them too.
 | `motor-toolchain-<name>-x86_64-linux.tar.zst` | `install.sh` and `toolchain/`, the Linux-host toolchain | Linux cross builds: the Motor OS repository, programs built beside it, third parties |
 | `motor-toolchain-<name>.tar.zst` | `install.sh` and `images/`, the native toolchain files | the Motor OS imager on Linux, and a user of a running Motor OS VM |
 
-The host installer requires rustup on `PATH` before it copies the toolchain.
-If rustup is not installed yet, install it without selecting a default:
+The host installer looks for rustup on `PATH`, then in `$CARGO_HOME/bin`
+(normally `~/.cargo/bin`). To install rustup without selecting a default
+and load it into the current shell, run
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |

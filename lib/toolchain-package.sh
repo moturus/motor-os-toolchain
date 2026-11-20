@@ -23,10 +23,12 @@ while [ "$#" -gt 0 ]; do
 		*) usage >&2; exit 2 ;;
 	esac
 done
-command -v rustup >/dev/null 2>&1 || {
-	echo "install.sh: rustup must be on PATH; install rustup before running this script" >&2
+rustup_bin="$(command -v rustup)" || rustup_bin="${CARGO_HOME:-$HOME/.cargo}/bin/rustup"
+if [ ! -f "$rustup_bin" ] || [ ! -x "$rustup_bin" ]; then
+	echo "install.sh: $name needs rustup. Looked on PATH and at $rustup_bin." >&2
+	echo "Install rustup from https://rustup.rs or add its bin directory to PATH, then rerun this installer." >&2
 	exit 1
-}
+fi
 case "$prefix" in /*) ;; *) prefix="$PWD/$prefix" ;; esac
 payload="$(cd "$(dirname "$0")" && pwd)/toolchain"
 [ -x "$payload/bin/rustc" ] || {
@@ -42,7 +44,7 @@ if [ -e "$prefix" ]; then
 fi
 mkdir -p "$(dirname "$prefix")"
 cp -R "$payload" "$prefix"
-rustup toolchain link "$name" "$prefix"
+"$rustup_bin" toolchain link "$name" "$prefix"
 echo "installed $name in $prefix"
 EOF
 }
